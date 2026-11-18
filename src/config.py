@@ -21,5 +21,8 @@ class Settings(BaseSettings):
 
     model_config = {"env_file": ".env", "env_file_encoding": "utf-8"}
 
+    # Local demo identity (not real authentication)
+    demo_customer_email: str = "marcus@example.com"
+
 
 settings = Settings()

@@ -112,3 +112,97 @@ class ReturnsService:
             ]
         finally:
             conn.close()
+
+    
+    def request_refund(
+        self,
+        order_id: str,
+        reason: str,
+        authenticated_email: str,
+    ) -> tuple[bool, str]:
+        """Create a refund request after checking eligibility."""
+        from datetime import timedelta
+        from src.services.order_service import OrderService
+
+        order_id = order_id.strip().upper()
+        authenticated_email = authenticated_email.strip().lower()
+        reason = reason.strip()
+
+        if not authenticated_email:
+            return False, "Authenticated customer identity is required."
+
+        if not reason:
+            return False, "A refund reason is required."
+
+        order_service = OrderService()
+        order = order_service.get_order(order_id)
+
+        if not order:
+            return False, f"Order {order_id} not found."
+
+        if order.email.lower() != authenticated_email:
+            return False, "Not authorized to refund this order."
+
+        # Check refund eligibility
+        if order.status != "delivered":
+            return False, "Only delivered orders can be refunded."
+
+        created = datetime.fromisoformat(order.created_at)
+        if datetime.now() - created > timedelta(days=14):
+            return False, "The 14-day refund window has expired."
+
+        # Determine approval status
+        amount = order.total
+        status = (
+            "pending_approval"
+            if amount > 100
+            else "approved"
+        )
+
+        conn = get_connection()
+
+        try:
+            # Prevent duplicate refund requests
+            existing = conn.execute(
+                "SELECT refund_id FROM refunds WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()
+
+            if existing:
+                return False, "A refund request already exists."
+
+            conn.execute(
+                """
+                INSERT INTO refunds
+                    (order_id, reason, amount, status, created_at)
+                VALUES (?, ?, ?, ?, ?)
+                """,
+                (
+                    order_id,
+                    reason,
+                    amount,
+                    status,
+                    datetime.now().isoformat(),
+                ),
+            )
+
+            conn.commit()
+
+            if status == "pending_approval":
+                return True, (
+                    f"Refund request for {order_id} submitted. "
+                    f"Amount: ${amount:.2f}. "
+                    "Waiting for human approval."
+                )
+
+            return True, (
+                f"Refund request for {order_id} approved. "
+                f"Amount: ${amount:.2f}."
+            )
+
+        except Exception:
+            conn.rollback()
+            raise
+        finally:
+            conn.close()
+

@@ -44,7 +44,7 @@ def after_tools(state: AgentState) -> str:
 def build_graph() -> StateGraph:
     """Build and compile the LangGraph state graph with retry loop."""
 
-    workflow = StateGraph(AgentState)
+    workflow = StateGraph(AgentState) #创建一个 LangGraph 工作流，并规定这个工作流里所有 Node 共享的数据结构是 AgentState
 
     # -- Add nodes --
     workflow.add_node("triage", triage_node)
@@ -52,18 +52,18 @@ def build_graph() -> StateGraph:
     workflow.add_node("response", response_node)
 
     # -- Add edges --
-    workflow.set_entry_point("triage")
+    workflow.set_entry_point("triage") #设置入口，先分类
 
     # Triage → tools or response
     workflow.add_conditional_edges(
-        "triage",
+        "triage", #从“triage”出发
         should_use_tools,
         {"tools": "tools", "response": "response"},
     )
 
     # Tools → response or retry
     workflow.add_conditional_edges(
-        "tools",
+        "tools", #从"tools"出发
         after_tools,
         {"retry": "tools", "response": "response"},
     )

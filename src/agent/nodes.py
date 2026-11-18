@@ -1,9 +1,9 @@
 """
 LangGraph Nodes — the three processing stages of the ReAct agent.
 
-  1. triage_node   → classify intent, extract entities
-  2. tool_node     → execute the relevant backend tools (with retry)
-  3. response_node → compose the final customer-facing reply
+  1. triage_node   → classify intent, extract entities分类
+  2. tool_node     → execute the relevant backend tools (with retry)执行function-calling
+  3. response_node → compose the final customer-facing reply 负责把结果组织成自然语言
 """
 import json
 import re
@@ -39,18 +39,20 @@ def _get_llm():
 def _get_llm_with_tools():
     global _llm_with_tools
     if _llm_with_tools is None:
-        _llm_with_tools = _get_llm().bind_tools(ALL_TOOLS)
+        _llm_with_tools = _get_llm().bind_tools(ALL_TOOLS) #把项目里的所有 Tool 的名称、描述、参数 schema 提供给 LLM
     return _llm_with_tools
 
 # ---------------------------------------------------------------------------
 # 1. TRIAGE NODE
 # ---------------------------------------------------------------------------
 
+
+
 TRIAGE_PROMPT = """You are an e-commerce customer support triage assistant.
 Analyze the customer's message and classify it as JSON:
 
 {
-    "intent": "<order_status | shipping_tracking | return_request | return_policy | general>",
+    "intent": "<order_status | shipping_tracking | return_request | refund_request | return_policy | cancel_order | general>",
     "order_id": "<order ID like ORD-1001, empty string if none>",
     "tracking_number": "<tracking number like FDX-78901234, empty string if none>",
     "customer_email": "<email address, empty string if none>",
@@ -59,13 +61,21 @@ Analyze the customer's message and classify it as JSON:
 }
 
 Rules:
-- "order_status": customer is asking about their order
-- "shipping_tracking": customer is asking about package tracking
-- "return_request": customer wants to return an item
-- "return_policy": customer is asking about return policy
-- "general": greetings, thanks, chitchat
+- "order_status": customer asks about an order's status or details.
+- "shipping_tracking": customer asks where a package is.
+- "return_request": customer wants to return an item.
+- "refund_request": customer explicitly asks for a refund.
+- "return_policy": customer asks about return or refund policies.
+- "cancel_order": customer explicitly asks to cancel an order.
+- "general": greetings, thanks, and chitchat.
 
-Return ONLY JSON, no other text."""
+Important:
+- Distinguish refund requests from return requests.
+- Distinguish order cancellation from refunds and returns.
+- Questions about eligibility or policy are not requests to execute a refund.
+- Do not invent missing order IDs or reasons.
+- Return ONLY valid JSON, no additional text."""
+
 
 
 def triage_node(state: AgentState) -> dict:
@@ -123,6 +133,83 @@ def tool_node(state: AgentState) -> dict:
     if intent == "general":
         return {"tool_results": {}, "retry_count": retries}
 
+    # Deterministic routing for explicit state-changing requests.
+    if intent in ("cancel_order", "refund_request"):
+        order_id = (state.get("order_id") or "").strip().upper()
+
+        if not order_id:
+            return {
+                "tool_results": {
+                    "missing_information": (
+                        "Please provide your order ID "
+                        "before I can process this request."
+                    )
+                },
+                "retry_count": retries,
+            }
+
+        tool_name = (
+            "cancel_order"
+            if intent == "cancel_order"
+            else "request_refund"
+        )
+
+        tool_args = {"order_id": order_id}
+
+        if intent == "refund_request":
+            user_message = next(
+                (
+                    m.content
+                    for m in reversed(messages)
+                    if isinstance(m, HumanMessage)
+                    and isinstance(m.content, str)
+                ),
+                "",
+            )
+
+            if not user_message.strip():
+                return {
+                    "tool_results": {
+                        "missing_information": (
+                            "Please explain why you are "
+                            "requesting a refund."
+                        )
+                    },
+                    "retry_count": retries,
+                }
+
+            tool_args["reason"] = user_message.strip()
+
+        selected_tool = next(
+            (tool for tool in ALL_TOOLS if tool.name == tool_name),
+            None,
+        )
+
+        if selected_tool is None:
+            return {
+                "tool_results": {
+                    "error": f"Tool '{tool_name}' is unavailable."
+                },
+                "retry_count": retries + 1,
+            }
+
+        try:
+            result = selected_tool.invoke(tool_args)
+
+            return {
+                "tool_results": {tool_name: str(result)},
+                "retry_count": retries + 1,
+            }
+
+        except Exception as exc:
+            return {
+                "tool_results": {
+                    tool_name: f"❌ Tool execution failed: {exc}"
+                },
+                "retry_count": retries + 1,
+            }
+
+
     context_prompt = f"""Customer intent: {intent}
 
 Available context:
@@ -130,25 +217,41 @@ Available context:
 - Tracking Number: {state.get('tracking_number') or 'unknown'}
 - Email: {state.get('customer_email') or 'unknown'}
 
-Call the appropriate tool with the available parameters."""
+Call the appropriate tool with the available parameters.
+
+Tool selection rules:
+- If intent is "cancel_order", call cancel_order with the order ID.
+- Do not substitute lookup_order for cancel_order.
+- The cancel_order tool performs the authoritative status
+  and ownership checks, including when cancellation is denied.
+- If intent is "refund_request", call request_refund only
+  when the customer explicitly requests a refund and
+  provides the required order information.
+- Do not initiate a return or refund merely because
+  the customer reports a defective product.
+- If required information is missing, do not execute
+  any state-changing tool.
+- Do not claim capabilities that the available tools
+  cannot perform.
+"""
 
     try:
         ai_msg = _get_llm_with_tools().invoke([
             SystemMessage(content=context_prompt),
             *messages,
-        ])
+        ]) #这里LLM生成一个 Tool Call,需要的tool和参数,生成调用计划”，还没有真正执行函数(ai_msg.tool_calls)
 
         tool_results = {}
 
-        if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls:
+        if hasattr(ai_msg, "tool_calls") and ai_msg.tool_calls: #ai_msg 这个对象有没有 tool_calls 这个属性;即使有这个属性，里面是不是确实有内容
             for tc in ai_msg.tool_calls:
                 tool_name = tc["name"]
                 tool_args = tc["args"]
 
                 for tool in ALL_TOOLS:
-                    if tool.name == tool_name:
+                    if tool.name == tool_name: #tool.name是真正的python函数，tool_name只是一个str名称
                         try:
-                            result = tool.invoke(tool_args)
+                            result = tool.invoke(tool_args) #真正执行函数，返回结果
                             tool_results[tool_name] = str(result)
                         except Exception:
                             tool_results[tool_name] = (
@@ -156,7 +259,7 @@ Call the appropriate tool with the available parameters."""
                                 f"{traceback.format_exc()[-200:]}"
                             )
                         break
-                else:
+                else: #找不到tool:
                     tool_results[tool_name] = f"❌ Tool '{tool_name}' not found."
 
         return {"tool_results": tool_results, "retry_count": retries + 1}

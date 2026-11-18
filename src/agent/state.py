@@ -12,7 +12,7 @@ class AgentState(TypedDict):
     # Conversation messages (append-only via `add_messages` reducer)
     messages: Annotated[list, add_messages]
 
-    # Triage classification result
+    # Triage classification result (Triage Node 判断出来的用户意图)
     intent: str  # order_status | shipping_tracking | return_request | return_policy | general
 
     # Entities extracted from the user message

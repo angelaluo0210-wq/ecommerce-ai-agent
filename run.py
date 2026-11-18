@@ -13,7 +13,7 @@ import webbrowser
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent
-VENV_PYTHON = str(ROOT / "venv" / "Scripts" / "python.exe")
+VENV_PYTHON = sys.executable
 
 print("🚀 Starting Crate Support Agent...\n")
 

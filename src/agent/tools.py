@@ -10,6 +10,8 @@ from src.services.order_service import OrderService
 from src.services.shipping_service import ShippingService
 from src.services.returns_service import ReturnsService
 
+from src.config import settings
+
 # Singleton service instances
 order_service = OrderService()
 shipping_service = ShippingService()
@@ -162,6 +164,49 @@ def initiate_return(order_id: str, reason: str) -> str:
     )
 
 
+# cancellation tools
+@tool
+def cancel_order(order_id: str) -> str:
+    """Cancel an order if it belongs to the demo customer
+    and has not been shipped.
+    Use only for explicit cancellation requests.
+    """
+    success, message = order_service.cancel_order(
+        order_id,
+        settings.demo_customer_email,
+    )
+
+    if success:
+        return f"✅ {message}"
+
+    return f"❌ {message}"
+
+
+
+# refund tools
+@tool
+def request_refund(order_id: str, reason: str) -> str:
+    """Request a refund for a delivered order.
+
+    Use this tool when a customer explicitly requests a refund.
+    Requires an order ID and a reason.
+
+    Refunds over $100 require human approval.
+    """
+    success, message = returns_service.request_refund(
+        order_id=order_id,
+        reason=reason,
+        authenticated_email=settings.demo_customer_email,
+    )
+
+    if success:
+        return f"✅ {message}"
+
+    return f"❌ {message}"
+
+
+
+
 # ---------------------------------------------------------------------------
 # Aggregate tool list
 # ---------------------------------------------------------------------------
@@ -174,4 +219,6 @@ ALL_TOOLS = [
     get_return_policy,
     check_return_eligibility,
     initiate_return,
+    cancel_order,
+    request_refund,
 ]

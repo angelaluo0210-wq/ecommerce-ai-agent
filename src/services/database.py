@@ -57,6 +57,17 @@ CREATE TABLE IF NOT EXISTS returns (
     refund_amount  REAL NOT NULL,
     created_at     TEXT NOT NULL
 );
+
+
+CREATE TABLE IF NOT EXISTS refunds (
+    refund_id      INTEGER PRIMARY KEY AUTOINCREMENT,
+    order_id       TEXT NOT NULL UNIQUE REFERENCES orders(order_id),
+    reason         TEXT NOT NULL,
+    amount         REAL NOT NULL,
+    status         TEXT NOT NULL DEFAULT 'pending_approval',
+    created_at     TEXT NOT NULL
+);
+
 """
 
 

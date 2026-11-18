@@ -109,3 +109,52 @@ class OrderService:
         if datetime.now() - created > timedelta(days=14):
             return False, "The 14-day return window has expired."
         return True, "Order is eligible for return."
+
+
+    
+    def cancel_order(
+        self, order_id: str, authenticated_email: str
+    ) -> tuple[bool, str]:
+        """Cancel a confirmed order belonging to the authenticated user."""
+        order_id = order_id.upper()
+        authenticated_email = authenticated_email.strip().lower()
+
+        if not authenticated_email:
+            return False, "Authenticated customer identity is required."
+
+        conn = get_connection()
+
+        try:
+            cursor = conn.execute(
+                """
+                UPDATE orders
+                SET status = 'cancelled'
+                WHERE order_id = ?
+                  AND LOWER(email) = ?
+                  AND status = 'confirmed'
+                """,
+                (order_id, authenticated_email),
+            )
+
+            if cursor.rowcount == 1:
+                conn.commit()
+                return True, f"Order {order_id} cancelled successfully."
+
+            row = conn.execute(
+                "SELECT email, status FROM orders WHERE order_id = ?",
+                (order_id,),
+            ).fetchone()
+
+            if row is None:
+                return False, f"Order {order_id} not found."
+
+            if row["email"].lower() != authenticated_email:
+                return False, "Not authorized to cancel this order."
+
+            return False, (
+                f"Cannot cancel order {order_id}. "
+                f"Current status: {row['status']}."
+            )
+
+        finally:
+            conn.close()
