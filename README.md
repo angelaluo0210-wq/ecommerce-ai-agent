@@ -166,4 +166,4 @@ tests/                           # Unit and integration tests
 
 This repository is an **extension of**, not an original implementation of, [m-peker/ecommerce-ai-agent](https://github.com/m-peker/ecommerce-ai-agent). The original application architecture, initial business tools, seed data and UI are credited to its author. My contributions are the cancellation/refund extensions, human-approval workflow, deterministic tool routing, additional tests and evaluation pipeline described above.
 
-The upstream repository identifies its license as MIT. Preserve the upstream `LICENSE` and applicable notices when publishing a fork or derivative.
+The upstream repository identifies its license as MIT.
